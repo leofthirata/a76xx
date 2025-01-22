@@ -1,23 +1,3 @@
-/******************************************************************************
- * Copyright © 2008 - 2024, F&K Group. All rights reserved.
- *
- * No part of this software may be reproduced, distributed, or transmitted in
- * any form or by any means without the prior written permission of the F&K Group
- * company.
- *
- * For permission requests, contact the company through the e-mail address
- * tbd@fkgroup.com.br with subject "Software Licence Request".
- ******************************************************************************/
-
-/*******************************************************************************
- * F&K Group A76XX LTE DRIVER
- *
- * A76XX class declaration.
- *
- * @author Leonardo Hirata
- * @copyright F&K Group
- ******************************************************************************/
-
 #ifndef _A76XX_H_
 #define _A76XX_H_
 
