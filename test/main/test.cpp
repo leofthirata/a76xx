@@ -13,9 +13,9 @@
 
 #define A7683_TXD_PIN         14
 #define A7683_RXD_PIN         34
-#define A7683_PWRKEY          16
-#define A7683_POWER_ON        13
-#define A7683_NETLIGHT        37
+#define A7683_PWRKEY          25
+#define A7683_POWER_ON        32
+#define A7683_NETLIGHT        15
 #define PIN_LED_STATUS_RED  GPIO_NUM_33
 #define PIN_LED_STATUS_GREEN GPIO_NUM_25
 
