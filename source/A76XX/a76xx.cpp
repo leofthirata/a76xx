@@ -1,5 +1,16 @@
 #include "a76xx.h"
 
+#define HIGH 1
+#define LOW 0
+
+#define TAG "A76XX"
+
+typedef struct
+{
+    int len;
+    char rx[512];
+} ModemUartRx_t;
+
 namespace MODEM
 {
 

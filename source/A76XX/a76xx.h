@@ -22,11 +22,6 @@
 #include "driver/uart.h"
 #include "driver/gpio.h"
 
-// #include "Arduino.h"
-
-// #include <IPAddress.h>
-
-// leo includes
 #include "esp_log.h"
 #include <esp_check.h>
 #include "esp_netif.h"
@@ -44,17 +39,6 @@
 
 namespace MODEM
 {
-
-#define HIGH 1
-#define LOW 0
-
-#define TAG "A76XX"
-
-typedef struct
-{
-    int len;
-    char rx[512];
-} ModemUartRx_t;
 
 typedef enum
 {
