@@ -314,7 +314,7 @@ void test_lte(A76XX *m)
             }
         } // switch write end
 
-        vTaskDelay(10);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
     } // while end
 
     if (lte_timer_up) {

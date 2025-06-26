@@ -7,8 +7,8 @@
 #define GPIO_PIN_SEL(pin) (1ULL << pin)
 #define TXD_PIN ((gpio_num_t)GPIO_NUM_14)
 #define RXD_PIN ((gpio_num_t)GPIO_NUM_34)
-#define GPIO_OUTPUT_PWRKEY ((gpio_num_t)GPIO_NUM_16)
-#define GPIO_OUTPUT_POWER_ON ((gpio_num_t)GPIO_NUM_13)
+#define GPIO_OUTPUT_PWRKEY ((gpio_num_t)GPIO_NUM_25)
+#define GPIO_OUTPUT_POWER_ON ((gpio_num_t)GPIO_NUM_32)
 #define PIN_NUM_SWITCH 4
 #define PIN_NETLIGHT 37
 
