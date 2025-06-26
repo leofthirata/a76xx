@@ -9,7 +9,7 @@
 #include "esp_log.h"
 
 #include "LedBicolor.hpp"
-#include "A76XX/a76xx.h"
+#include "a76xx.hpp"
 
 #define A7683_TXD_PIN         14
 #define A7683_RXD_PIN         34
@@ -62,7 +62,7 @@ void timer_set_timer(esp_timer_handle_t timer, uint64_t timeout)
     esp_timer_start_once(timer, timeout);
 }
 
-void test_lte(MODEM::A76XX *m)
+void test_lte(A76XX *m)
 {
     printf("TEST LTE BEGIN\r\n");
 
@@ -91,19 +91,14 @@ void test_lte(MODEM::A76XX *m)
         {
             case LTE_STATE_ATE:
             {
-                char* str = "ATE1\r";
-                char out[512];
-                m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
-
+                m->set_echo_mode();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 lte_test_state_write = LTE_STATE_CREG;
                 break;
             }
             case LTE_STATE_CREG:
             {
-                char* str = "AT+CREG?\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+CREG: 0,1", "ERROR", 30000);
+                err = m->check_registered();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -113,9 +108,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CGREG:
             {
-                char* str = "AT+CGREG?\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+CGREG: 0,1", "ERROR", 30000);
+                err = m->check_registration_status();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -125,9 +118,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CMEE:
             {
-                char* str = "AT+CMEE=1\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                err = m->set_error_report_numeric();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -138,9 +129,7 @@ void test_lte(MODEM::A76XX *m)
             // TIMER
             case LTE_STATE_NETCLOSE:
             {
-                char* str = "AT+NETCLOSE\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "", "", 30000);
+                err = m->stop_socket();
                 timer_set_timer(lte_timer, 120000000); // sets timer for 15s for gsm testing
                 // if (err != ESP_OK)
                 //     lte_test_state_write = LTE_STATE_ERROR;
@@ -150,9 +139,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CGDCONT_1:
             {
-                char* str = "AT+CGDCONT=1,\"IP\",\"simplepm.algar.br\",\"0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0\",0,0\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                err = m->set_pdp_context();
                 timer_set_timer(lte_timer, 9000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -162,9 +149,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CGDCONT_2:
             {
-                char* str = "AT+CGDCONT?\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                err = m->get_pdp_context();
                 timer_set_timer(lte_timer, 75000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -174,9 +159,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CSOCKSETPN:
             {
-                char* str = "AT+CSOCKSETPN=1\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                err = m->set_pdp_context_active();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -186,9 +169,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CIPRXGET:
             {
-                char* str = "AT+CIPRXGET=1\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                err = m->set_retrieve_data_mode();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 
                 if (err != ESP_OK)
@@ -199,9 +180,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CIPMODE:
             {
-                char* str = "AT+CIPMODE=0\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                err = m->set_tcpip_mode();
                 timer_set_timer(lte_timer, 30000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -211,9 +190,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_NETOPEN:
             {
-                char* str = "AT+NETOPEN\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+NETOPEN: 0", "ERROR", 30000);
+                err = m->start_socket_service();
                 timer_set_timer(lte_timer, 65000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -223,9 +200,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_IPADDR:
             {
-                char* str = "AT+IPADDR\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+IPADDR:", "ERROR", 30000);
+                err = m->get_socket_ip();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -235,9 +210,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CIPCLOSE:
             {
-                char* str = "AT+CIPCLOSE=0\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+CIPCLOSE", "DUMMY", 30000);
+                err = m->close_socket();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -247,9 +220,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CIPOPEN:
             {
-                char* str = "AT+CIPOPEN=0,\"TCP\",\"0.tcp.sa.ngrok.io\",11197\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+CIPRXGET: 1,0", "ERROR", 30000);
+                err = m->tcp_connect();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -259,9 +230,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_CIPSEND:
             {
-                char* str = "AT+CIPSEND=0,5\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "", "ERROR", 30000);
+                err = m->tcp_send();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -271,9 +240,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_RESTART:
             {
-                char* str = "AT+CIPCLOSE=0\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+CIPCLOSE", "CONNECT FAIL", 30000);
+                err = m->close_socket();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 if (err != ESP_OK)
                     lte_test_state_write = LTE_STATE_ERROR;
@@ -285,7 +252,7 @@ void test_lte(MODEM::A76XX *m)
             {
                 char* str = "TEST\r";
                 char out[512];
-                err = m->send_cmd(str, strlen(str), out, "+CIPSEND:", "ERROR", 30000);
+                // err = m->send_cmd(str, strlen(str), out, "+CIPSEND:", "ERROR", 30000);
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 
                 if (err != ESP_OK)
@@ -297,9 +264,7 @@ void test_lte(MODEM::A76XX *m)
             }
             case LTE_STATE_RECEIVE:
             {
-                char* str = "AT+CIPRXGET=2,0\r";
-                char out[512];
-                err = m->send_cmd(str, strlen(str), out, "GSM TEST END", "DUMMY", 30000);
+                err = m->tcp_receive();
                 timer_set_timer(lte_timer, 15000000); // sets timer for 15s for gsm testing
                 
                 if (err != ESP_OK)
@@ -336,7 +301,7 @@ void test_lte(MODEM::A76XX *m)
             {
                 char* str = "AT+CPOF\r";
                 char out[512];
-                err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
+                // err = m->send_cmd(str, strlen(str), out, "OK", "ERROR", 30000);
                 timer_set_timer(lte_timer, 60000000); // sets timer for 15s for gsm testing
                 
                 if (err == ESP_OK)
@@ -352,18 +317,17 @@ void test_lte(MODEM::A76XX *m)
         vTaskDelay(10);
     } // while end
 
-    if (lte_timer_up)
-    {
+    if (lte_timer_up) {
         printf("JIGA ISCA GSM TIMEOUT\r\n");
     }
 }
 
-void on_log_received(const char *log)
+void on_log_received(const std::string &log)
 {
-    ESP_LOGW("MODEM LOG", "%s", log);
+    ESP_LOGW("MODEM LOG", "%s", log.c_str());
 }
 
-void on_state_changed(MODEM::ModemStatus_t state)
+void on_state_changed(const ModemStatus_t &state)
 {
     ESP_LOGW("MODEM STATE", "STATE = %d", state);
 
@@ -373,7 +337,7 @@ void on_state_changed(MODEM::ModemStatus_t state)
 
 extern "C" void app_main(void)
 {
-    MODEM::A76XX *modem = new MODEM::A76XX(A7683_RXD_PIN, A7683_TXD_PIN, A7683_PWRKEY, A7683_POWER_ON, A7683_NETLIGHT, UART_NUM_1, 115200);
+    A76XX *modem = new A76XX(A7683_RXD_PIN, A7683_TXD_PIN, A7683_PWRKEY, A7683_POWER_ON, A7683_NETLIGHT, UART_NUM_1, 115200);
 
     modem->log_callback(on_log_received);
     modem->status_callback(on_state_changed);
