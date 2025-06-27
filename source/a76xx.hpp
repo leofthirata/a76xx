@@ -58,23 +58,28 @@ public:
     
     esp_err_t send_cmd(const std::string &cmd, std::string *out, const std::string &pass, const std::string &fail, const int &timeout);
 
+    esp_err_t get_lbs(std::string *lat, std::string *lon);
+    esp_err_t get_date_time(std::string *date, std::string *time);
+
+    bool can_send();
     void power_on();
     esp_err_t power_off();
+    esp_err_t check_simcard();
     esp_err_t get_imei();
     esp_err_t get_signal_quality();
     esp_err_t get_operator_name();
     esp_err_t get_clock();
     esp_err_t set_echo_mode();
-    esp_err_t check_registered();
-    esp_err_t check_registration_status();
+    esp_err_t check_gsm_network();
+    esp_err_t check_gprs_lte_network();
     esp_err_t set_error_report_numeric();
-    esp_err_t stop_socket();
+    esp_err_t deactivate_pdp_context();
     esp_err_t set_pdp_context();
     esp_err_t get_pdp_context();
     esp_err_t set_pdp_context_active();
     esp_err_t set_retrieve_data_mode();
     esp_err_t set_tcpip_mode();
-    esp_err_t start_socket_service();
+    esp_err_t activate_pdp_context();
     esp_err_t get_socket_ip();
     esp_err_t close_socket();
     esp_err_t tcp_connect();
