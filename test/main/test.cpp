@@ -1,12 +1,10 @@
 #include "sdkconfig.h"
 
-#include <inttypes.h>
-#include <string.h>
-
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 #include "esp_log.h"
+#include "driver/uart.h"
 
 #include "LedBicolor.hpp"
 #include "a76xx.hpp"
@@ -20,39 +18,9 @@
 #define PIN_LED_STATUS_GREEN GPIO_NUM_25
 
 bool can_send = false;
-bool lte_timer_up = false;
-static esp_timer_handle_t lte_timer;
+int state = 7;
 
-typedef enum
-{
-    LTE_STATE_ATE,
-    LTE_STATE_CREG,
-    LTE_STATE_CGREG,
-    LTE_STATE_CMEE,
-    LTE_STATE_NETCLOSE,
-    LTE_STATE_CGDCONT_1,
-    LTE_STATE_CGDCONT_2,
-    LTE_STATE_CSOCKSETPN,
-    LTE_STATE_CIPMODE,
-    LTE_STATE_NETOPEN,
-    LTE_STATE_IPADDR,
-    LTE_STATE_CIPCLOSE,
-    LTE_STATE_CIPOPEN,
-    LTE_STATE_CIPRXGET,
-    LTE_STATE_CIPSEND,
-    LTE_STATE_RESTART,
-    LTE_STATE_MSG,
-    LTE_STATE_RECEIVE,
-    LTE_STATE_WAITING,
-    LTE_STATE_ERROR,
-    LTE_STATE_DONE,
-    LTE_STATE_POWER_OFF,
-} LTEState_t;
-
-static void lte_timer_callback(void *arg)
-{
-    lte_timer_up = true;
-}
+void handle_error(A76XX *modem);
 
 void timer_set_timer(esp_timer_handle_t timer, uint64_t timeout)
 {
@@ -62,100 +30,207 @@ void timer_set_timer(esp_timer_handle_t timer, uint64_t timeout)
     esp_timer_start_once(timer, timeout);
 }
 
-void test_lte(A76XX *m)
-{
-    printf("TEST LTE BEGIN\r\n");
+// void test_lte(A76XX *m)
+// {
+//     printf("TEST LTE BEGIN\r\n");
 
-    // auto banding?
+//     // auto banding?
 
-    // query sim card status
-    m->check_simcard();
+//     // query sim card status
+//     int ret = m->check_simcard();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
+    
+//     ret = m->get_signal_quality();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    m->get_signal_quality();
+//     // query gsm network
+//     ret = m->check_gsm_network();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // query gsm network
-    m->check_gsm_network();
-    // query gprs/lte network in 90s
-    m->check_gprs_lte_network();
+//     // query gprs/lte network in 90s
+//     ret = m->check_gprs_lte_network();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // activate pdp context
-    // AT+CGDCONT and AT+CGACT
-    // query ip address of pdp context AT+CGPADDR
-    m->set_pdp_context();
-    // vTaskDelay(5000 / portTICK_PERIOD_MS);
+//     // activate pdp context
+//     // AT+CGDCONT and AT+CGACT
+//     // query ip address of pdp context AT+CGPADDR
+//     ret = m->set_pdp_context();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    m->get_pdp_context();
-    m->set_pdp_context_active();
+//     ret = m->check_pdp_context();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
+//     ret = m->set_pdp_context_active();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    m->set_retrieve_data_mode();
+//     ret = m->set_retrieve_data_mode();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // set tcp/ip mode
-    m->set_tcpip_mode();
+//     // set tcp/ip mode
+//     ret = m->set_tcpip_mode();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // activate pdp context
-    m->activate_pdp_context();
+//     // activate pdp context
+//     ret = m->start_socket_service();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // get ip addr
-    m->get_socket_ip();
+//     // get ip addr
+//     ret = m->get_socket_ip();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // establish connection
-    m->tcp_connect();
+//     // establish connection
+//     ret = m->tcp_connect();
+//     if (ret != ESP_OK) {
+//         // check if server ok
+//     }
 
-    m->tcp_receive();
+//     ret = m->tcp_receive();
+//     if (ret != ESP_OK) {
+//         // check connection
+//     }
 
-    m->tcp_send();
+//     ret = m->tcp_send();
+//     if (ret != ESP_OK) {
+//         // check connection
+//     }
 
-    // // close socket
-    m->close_socket();
+//     // close socket
+//     ret = m->close_socket();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
 
-    // // deactivate pdp context
-    m->deactivate_pdp_context();
-}
+//     // deactivate pdp context
+//     ret = m->stop_socket_service();
+//     if (ret != ESP_OK) {
+//         // reboot
+//     }
+// }
 
 void on_log_received(const std::string &log)
 {
-    ESP_LOGW("MODEM LOG", "%s", log.c_str());
+    ESP_LOGI("MODEM LOG", "%s", log.c_str());
 }
 
 void on_state_changed(const ModemStatus_t &state)
 {
     ESP_LOGW("MODEM STATE", "STATE = %d", state);
+    if (state == 2)
+        can_send = true; 
+}
 
-    if (state == 3)
-        can_send = true;
+void state_timer_callback(void *args)
+{
+    ESP_LOGW("STATE TIMER", "triggered");
+    state = 0;
 }
 
 extern "C" void app_main(void)
 {
-    A76XX *modem = new A76XX(A7683_RXD_PIN, A7683_TXD_PIN, A7683_PWRKEY, A7683_POWER_ON, A7683_NETLIGHT, UART_NUM_1, 115200);
+    // esp_log_level_set("*", ESP_LOG_DEBUG);
+
+    A76XX *modem = new A76XX(A7683_RXD_PIN, A7683_TXD_PIN, A7683_PWRKEY, A7683_POWER_ON, A7683_NETLIGHT, UART_NUM_2, 115200);
 
     modem->log_callback(on_log_received);
     modem->status_callback(on_state_changed);
 
-    modem->power_on();
+    esp_timer_handle_t state_timer;
 
-    while (!can_send)
-        vTaskDelay(10);
+    const esp_timer_create_args_t args = {
+        .callback = &state_timer_callback,
+        .arg = nullptr,
+        .name = "state_timer_callback"
+    };
 
-    while (!modem->can_send())
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+    ESP_ERROR_CHECK(esp_timer_create(&args, &state_timer));
 
-    // vTaskDelay(5000 / portTICK_PERIOD_MS);
+    esp_timer_start_once(state_timer, 0);
 
-    test_lte(modem);
+    while (1) {
+        switch (state) {
+            case 0: {
+                modem->power_on();
 
-    std::string lat;
-    std::string lon;
-    modem->get_lbs(&lat, &lon);
+                while (!can_send)
+                    vTaskDelay(pdMS_TO_TICKS(10));
 
-    ESP_LOGI("main", "%s", lat.c_str());
-    ESP_LOGI("main", "%s", lon.c_str());
+                while (!modem->can_send())
+                    vTaskDelay(500 / portTICK_PERIOD_MS);
 
-    modem->power_off();
+                state = 2;
+                break;
+            }
+            case 1: {
+                int ret = modem->send_data_and_receive();
+                state = ret == ESP_OK ? 4 : 5;
+                break;
+            }
+            case 2: {
+                int ret = modem->send_data();
+                state = ret == ESP_OK ? 4 : 5;
+                break;
+            }
+            case 3: {
+                int ret = modem->receive_data();
+                state = ret == ESP_OK ? 4 : 5;
+                break;
+            }
+            case 4: {
+                int ret = modem->update_position();
+                if (ret == ESP_OK) {
+                    ESP_LOGI("main", "%s", modem->lbs.lat.c_str());
+                    ESP_LOGI("main", "%s", modem->lbs.lon.c_str());
+                }
+                state = 5;
+                break;
+            }
+            case 5: {
+                handle_error(modem);
+                modem->power_off();
 
-    while (1)
-    {
-        // ESP_LOGW("main loop", "ALIVE\r\n");
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+                state = 6;
+
+                while (modem->get_on())
+                    vTaskDelay(10);
+                    
+                esp_timer_start_once(state_timer, 60000000);
+                break;
+            }
+            case 6: {
+
+                break;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
+}
+
+void handle_error(A76XX *modem)
+{
+    std::tuple<std::string, std::string> cmd_err;
+                    
+    modem->get_last_err(&cmd_err);
+    ESP_LOGE("main", "cmd: %s", std::get<0>(cmd_err).c_str());
+    ESP_LOGE("main", "err: %s", std::get<1>(cmd_err).c_str());
 }

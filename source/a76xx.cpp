@@ -114,9 +114,9 @@ A76XX::A76XX(int rxd_pin, int txd_pin, int pwrkey_pin, int power_on_pin, int net
     if (xQueueModemRx == 0)
         ESP_LOGE(TAG, "xQueueCreate fail to create xQueueModemRx\r\n");
 
-    xTaskCreate(netlight_task, "netlight_task", 1024, this, 1, &m_netlight_task_handle);
-    xTaskCreate(power_task, "power_task", 1024, this, 1, &m_power_task_handle);
-    xTaskCreate(rx_task, "rx_task", 3072, this, 2, &m_rx_task_handle);
+    xTaskCreate(netlight_task, "netlight_task", 1024*2, this, 1, &m_netlight_task_handle);
+    xTaskCreate(power_task, "power_task", 1024*2, this, 1, &m_power_task_handle);
+    xTaskCreate(rx_task, "rx_task", 1024*3, this, 2, &m_rx_task_handle);
 }
 
 A76XX::~A76XX()
@@ -127,7 +127,6 @@ void netlight_task(void *args)
 {
     A76XX *modem = static_cast<A76XX *>(args);
 
-    int64_t now = 0;
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
@@ -136,7 +135,7 @@ void netlight_task(void *args)
         modem->negativePulseWidth = modem->isrNegativeWidth;
         modem->lastPulseStartNegativeTime = modem->isrLastPulseStartNegativeTime;
         portENABLE_INTERRUPTS();
-        now = esp_timer_get_time();
+        int64_t now = esp_timer_get_time();
         if ((now - modem->lastPulseStartNegativeTime) / 1000 > 300) {
             modem->positivePulseWidth = 0;
             modem->negativePulseWidth = 0;
@@ -163,7 +162,6 @@ void power_task(void *args)
             if (modem->m_power_up)
                 modem->set_state(MODEM_STATE_SEARCHING);
         }
-        vTaskDelay(10);
     }
 }
 
@@ -175,36 +173,43 @@ void rx_task(void *args) // UART Receive Task
 
     ESP_LOGW(TAG, "RX TASK BEGIN\r\n");
 
-    while (1)
-    {
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+
         ModemUartRx_t response;
 
         response.len = uart_read_bytes(modem->m_uart, response.rx, 512, (100 / portTICK_PERIOD_MS));
-        if (response.len > 0) {
-            response.rx[response.len] = 0;
-            std::string rsp {response.rx};
-            rsp = rsp.substr(0, response.len);
+        if (response.len <= 0)
+            continue;
 
-            if (modem->m_just_turned_on) {
-                modem->set_state(MODEM_STATE_POWERING);
-                modem->m_just_turned_on = false;
-            }
-            // 5.2.15 AT+CGEREP GPRS event reporting
-            if (rsp.find("+CPIN: READY") != std::string::npos)
-                modem->set_state(MODEM_STATE_ATTACH);
-            else if (rsp.find("+CPIN: SIM REMOVED") != std::string::npos)
-                modem->set_state(MODEM_STATE_DETACH);
-            else if (rsp.find("+CGEV: NW PDN ACT") != std::string::npos)
-                modem->set_state(MODEM_STATE_REGISTERED);
+        response.rx[response.len] = 0;
+        std::string rsp {response.rx};
+        rsp = rsp.substr(0, response.len);
 
-            if (!modem->m_cmd_sent)
-                modem->m_l(rsp);
-
-            int ret = xQueueSend(modem->xQueueModemRx, &response, (TickType_t)0);
-            if (ret != pdTRUE)
-                ESP_LOGE(TAG, "RX TASK Failed to queue response to xQueueModemRx\r\n");
+        if (modem->m_just_turned_on) {
+            modem->set_state(MODEM_STATE_POWERING);
+            modem->m_just_turned_on = false;
         }
-        vTaskDelay(10);
+        // 5.2.15 AT+CGEREP GPRS event reporting
+        if (rsp.find("+CPIN: READY") != std::string::npos)
+            modem->set_state(MODEM_STATE_ATTACH);
+        else if (rsp.find("+CPIN: SIM REMOVED") != std::string::npos)
+            modem->set_state(MODEM_STATE_DETACH); // MUST REBOOT
+        else if (rsp.find("+CGEV: NW PDN ACT") != std::string::npos)
+            modem->set_state(MODEM_STATE_REGISTERED);
+        else if (rsp.find("+CGEV: NW PDN DEACT") != std::string::npos)
+            modem->set_state(MODEM_STATE_NETWORK_CONTEXT_DEACT);
+        else if (rsp.find("+CGEV: NW REATTACH") != std::string::npos)
+            modem->set_state(MODEM_STATE_SEARCHING);
+        else if (rsp.find("+CIPEVENT: NETWORK CLOSED UNEXPECTEDLY") != std::string::npos)
+            modem->set_state(MODEM_STATE_NETWORK_CLOSED);    
+
+        // if (!modem->m_cmd_sent)
+        modem->m_l(rsp);
+
+        int ret = xQueueSend(modem->xQueueModemRx, &response, (TickType_t)0);
+        if (ret != pdTRUE)
+            ESP_LOGE(TAG, "RX TASK Failed to queue response to xQueueModemRx\r\n");
     }
 }
 
@@ -226,12 +231,12 @@ bool A76XX::get_on()
 esp_err_t A76XX::send_cmd(const std::string &cmd, std::string *out, const std::string &pass, const std::string &fail, const int &timeout)
 {
     if (!m_on) {
-        ESP_LOGW("send_cmd", "Modem is offline. Turn on the modem first before sending any AT command.");
+        // ESP_LOGW("send_cmd", "Modem is offline. Turn on the modem first before sending any AT command.");
         return ESP_ERR_INVALID_STATE;
     }
 
     if (!m_power_up) {
-        ESP_LOGW("send_cmd", "Modem is powering up. Wait until power up is complete");
+        // ESP_LOGW("send_cmd", "Modem is powering up. Wait until power up is complete");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -239,7 +244,7 @@ esp_err_t A76XX::send_cmd(const std::string &cmd, std::string *out, const std::s
 
     uart_write_bytes(m_uart, cmd.c_str(), cmd.size());
 
-    ESP_LOGW("send_cmd", "Sent to modem: %s", cmd.c_str());
+    // ESP_LOGW("send_cmd", "Sent to modem: %s", cmd.c_str());
 
     ModemUartRx_t r;
 
@@ -253,7 +258,7 @@ esp_err_t A76XX::send_cmd(const std::string &cmd, std::string *out, const std::s
             return ESP_ERR_TIMEOUT;
         }
 
-        ESP_LOGI("send_cmd", "Received from modem: %s", r.rx);
+        // ESP_LOGI("send_cmd", "Received from modem: %s", r.rx);
 
         *out = r.rx;
 
@@ -311,6 +316,12 @@ void A76XX::set_state(ModemStatus_t state)
         case MODEM_STATE_ATTACH: {
             m_on = true;
             m_simcard = false;
+            break;
+        }
+        case MODEM_STATE_NETWORK_CONTEXT_DEACT: {
+            break;
+        }
+        case MODEM_STATE_NETWORK_CLOSED: {
             break;
         }
     }
@@ -391,244 +402,470 @@ esp_err_t A76XX::power_off()
 {
     const std::string cmd = "AT+CPOF\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    esp_err_t ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
-    
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
     gpio_set_level((gpio_num_t)m_power_on_pin, false);
 
-    return ret;
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+
+        return ret;
+    }
+
+    m_registered = false;
+    
+    return ESP_OK;
 }
 
 esp_err_t A76XX::get_imei()
 {
     const std::string cmd = "AT+CGSN\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+    
+    return ESP_OK;
+}
+
+int rssi_to_dbm(int rssi)
+{
+    if (rssi == 99)
+        return rssi;
+    if (rssi < 0)
+        return -113;
+    if (rssi > 31)
+        return 51;
+    
+    return rssi * 2 + -113;
 }
 
 esp_err_t A76XX::get_signal_quality()
 {
     const std::string cmd = "AT+CSQ\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    auto it = out.find(":");
+    out = out.substr(it + 2);
+    
+    it = out.find(",");
+    rssi = std::stoi(out.substr(0, it));
+    rssi_dbm = rssi_to_dbm(rssi);
+    // ESP_LOGW(TAG, "rssi dbm: %d", rssi_dbm);
+
+    out = out.substr(it + 1);
+    ber = std::stoi(out);
+    // ESP_LOGW(TAG, "ber: %d", ber);
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::get_operator_name()
 {
     const std::string cmd = "AT+COPS?\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+COPS:", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    auto it = out.find('"');
+    out = out.substr(it+1);
+
+    it = out.find('"');
+    nw_operator = out.substr(0, it);
+    out = out.substr(it+2);
+    nw_tech = out;
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::get_clock()
 {
     const std::string cmd = "AT+CCLK?\r";
     
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::set_echo_mode()
 {
     const std::string cmd = "ATE1\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::check_gsm_network()
 {
     const std::string cmd = "AT+CREG?\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "+CREG: 0,1", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+CREG: 0,", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    if (out.find(CREG_CGREG_RET_CODES[1]) == std::string::npos) {
+        for (std::string error : CREG_CGREG_RET_CODES) {
+            if (out.find(error) != std::string::npos) {
+                last_cmd_fail = {cmd, error};
+                return ESP_FAIL;
+            }
+        }
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::check_gprs_lte_network()
 {
     const std::string cmd = "AT+CGREG?\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "+CGREG: 0,1", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+CGREG: 0,", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    if (out.find(CREG_CGREG_RET_CODES[1]) == std::string::npos) {
+        for (std::string error : CREG_CGREG_RET_CODES) {
+            if (out.find(error) != std::string::npos) {
+                last_cmd_fail = {cmd, error};
+                return ESP_FAIL;
+            }
+        }
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::set_error_report_numeric()
 {
     const std::string cmd = "AT+CMEE=1\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
-esp_err_t A76XX::deactivate_pdp_context()
+esp_err_t A76XX::stop_socket_service()
 {
     const std::string cmd = "AT+NETCLOSE\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "", "", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+NETCLOSE:", "ERROR", 120000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    auto it = out.find(":");
+    out = out.substr(it + 2);
+
+    return out == "0" ? ESP_OK : ESP_FAIL;
 }
 
+// cmd params must be sent between quotes ""
 esp_err_t A76XX::set_pdp_context()
 {
     const std::string cmd = "AT+CGDCONT=1,\"IP\",\"simplepm.algar.br\",\"0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0\",0,0\r";
     
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
-esp_err_t A76XX::get_pdp_context()
+esp_err_t A76XX::check_pdp_context()
 {
     const std::string cmd = "AT+CGDCONT?\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::set_pdp_context_active()
 {
     const std::string cmd = "AT+CSOCKSETPN=1\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::set_retrieve_data_mode()
 {
     const std::string cmd = "AT+CIPRXGET=1\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::set_tcpip_mode()
 {
     const std::string cmd = "AT+CIPMODE=0\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
-esp_err_t A76XX::activate_pdp_context()
+// if CGDCONT was set with wrongly, this cmd will just print OK
+esp_err_t A76XX::start_socket_service()
 {
     const std::string cmd = "AT+NETOPEN\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "+NETOPEN: 0", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+NETOPEN: 0", "ERROR", 120000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
+// can only use this cmd after NETOPEN
 esp_err_t A76XX::get_socket_ip()
 {
     const std::string cmd = "AT+IPADDR\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "+IPADDR:", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+IPADDR:", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    auto it = out.find(":");
+    out = out.substr(it + 2);
+    ip = out;
+
+    // ESP_LOGW(TAG, "ip: %s", ip.c_str());
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::close_socket()
 {
     const std::string cmd = "AT+CIPCLOSE=0\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "+CIPCLOSE", "DUMMY", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+CIPCLOSE", "ERROR", 120000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
-esp_err_t A76XX::tcp_connect()
+// cmd params must be sent between quotes ""
+esp_err_t A76XX::tcp_connect(const std::string &pass)
 {
-    const std::string cmd = "AT+CIPOPEN=0,\"TCP\",\"0.tcp.sa.ngrok.io\",12262\r";
+    const std::string cmd = "AT+CIPOPEN=0,\"TCP\",\"0.tcp.sa.ngrok.io\",12713\r";
     
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "+CIPRXGET: 1,0", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, pass, "ERROR", 120000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::tcp_send()
 {
     std::string cmd = "AT+CIPSEND=0,5\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
-    int ret = send_cmd(cmd.c_str(), &out, "", "ERROR", 30000);
-    if (ret != ESP_OK)
+    int ret = send_cmd(cmd.c_str(), &out, "", "ERROR", 120000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
         return ret;
+    }
 
     cmd = "TEST\r";
-    return send_cmd(cmd.c_str(), &out, "+CIPSEND:", "ERROR", 30000);
+    ret = send_cmd(cmd.c_str(), &out, "+CIPSEND:", "ERROR", 120000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t A76XX::tcp_receive()
 {
     const std::string cmd = "AT+CIPRXGET=2,0\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "", "DUMMY", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "", "DUMMY", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    return ESP_OK;
 }
 
-// todo add all possible errors
-// todo add params 
 esp_err_t A76XX::check_simcard()
 {
     const std::string cmd = "AT+CPIN?\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    return send_cmd(cmd.c_str(), &out, "OK", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    if (out.find(CPIN_RET_CODES[0]) == std::string::npos) {
+        for (std::string error : CPIN_RET_CODES) {
+            if (out.find(error) != std::string::npos) {
+                last_cmd_fail = {cmd, error};
+                return ESP_FAIL;
+            }
+        }
+    }
+
+    return ESP_OK;
 }
 
-esp_err_t A76XX::get_lbs(std::string *lat, std::string *lon)
+esp_err_t A76XX::check_ue_info()
 {
-    int ret = get_signal_quality();
-    ret = check_gsm_network();
-    ret = check_gprs_lte_network();
+    const std::string cmd = "AT+CPSI?\r";
 
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
+    std::string out;
+
+    int ret = send_cmd(cmd.c_str(), &out, "+CPSI: ", "ERROR", 9000);
+    if (ret != ESP_OK) {
+        last_cmd_fail = {cmd, "ERROR"};
+        return ret;
+    }
+
+    if (out.find(CPSI_RET_CODES[0]) == std::string::npos) {
+        for (std::string error : CPSI_RET_CODES) {
+            if (out.find(error) != std::string::npos) {
+                last_cmd_fail = {cmd, error};
+                return ESP_FAIL;
+            }
+        }
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t A76XX::get_lbs()
+{
     const std::string cmd = "AT+CLBS=1\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
     
-    ret = send_cmd(cmd.c_str(), &out, "+CLBS:", "ERROR", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+CLBS:", "ERROR", 9000);
     if (ret != ESP_OK)
         return ret;
 
@@ -636,53 +873,74 @@ esp_err_t A76XX::get_lbs(std::string *lat, std::string *lon)
         for (std::string error : CLBS_RET_CODES) {
             if (out.find(error) != std::string::npos) {
                 // print error code
+                last_cmd_fail = {cmd, error};
                 return ESP_FAIL;
             }
         }
     }
 
-    ESP_LOGW(TAG, "%s", out.c_str());
     auto it = out.find("-");
     out = out.substr(it);
-    ESP_LOGW(TAG, "%s", out.c_str());
     
     it = out.find(",");
-    *lat = out.substr(0, it);
+    lbs.lat = out.substr(0, it);
     
     out = out.substr(it + 1);
-    ESP_LOGW(TAG, "%s", out.c_str());
 
     it = out.find(",");
-    *lon = out.substr(0, it);
+    lbs.lon = out.substr(0, it);
 
-    return ESP_OK;
+    return get_date_time();
 }
 
-
-esp_err_t A76XX::get_date_time(std::string *date, std::string *time)
+esp_err_t A76XX::get_date_time()
 {
-    int ret = get_signal_quality();
-    ret = check_gsm_network();
-    ret = check_gprs_lte_network();
-
     const std::string cmd = "AT+CLBS=4\r";
 
-    ESP_LOGW(TAG, "%s", cmd.c_str());
+    // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
 
-    ret = send_cmd(cmd.c_str(), &out, "", "DUMMY", 30000);
+    int ret = send_cmd(cmd.c_str(), &out, "+CLBS:", "ERROR", 9000);
     if (ret != ESP_OK)
         return ret;
+
+    if (out.find(CLBS_RET_CODES[0]) == std::string::npos) {
+        for (std::string error : CLBS_RET_CODES) {
+            if (out.find(error) != std::string::npos) {
+                last_cmd_fail = {cmd, error};
+                return ESP_FAIL;
+            }
+        }
+    }
 
     auto it = out.find("/");
     out = out.substr(it-4);
     
     it = out.find(",");
-    *date = out.substr(0, it);
+    lbs.date = out.substr(0, it);
     
     out = out.substr(it + 1);
-    *time = out.substr(0, it);
+    lbs.time = out.substr(0, it);
     
+    return ESP_OK;
+}
+
+esp_err_t A76XX::update_position()
+{
+    int ret = check_network_and_simcard();
+
+    ret = check_ue_info();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = get_lbs();
+    if (ret != ESP_OK)
+        return ret;
+    
+    ret = get_date_time();
+    if (ret != ESP_OK)
+        return ret;
+
     return ESP_OK;
 }
 
@@ -692,7 +950,182 @@ bool A76XX::can_send()
 
     // ESP_LOGW(TAG, "%s", cmd.c_str());
     std::string out;
-    esp_err_t ret = send_cmd(cmd.c_str(), &out, "OK", "Modem is powering up. Wait until power up is complete", 30000);
+    esp_err_t ret = send_cmd(cmd.c_str(), &out, "OK", "Modem is powering up. Wait until power up is complete", 9000);
 
     return ret == ESP_OK ? true : false;
+}
+
+void A76XX::get_last_err(std::tuple<std::string, std::string> *out) const
+{
+    *out = last_cmd_fail;
+}
+
+esp_err_t A76XX::send_data()
+{
+    int ret = check_network_and_simcard();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = pdp_context_init();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = connect_to_server();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = tcp_send();
+    if (ret != ESP_OK)
+        return ret;
+
+    return disconnect_from_server();
+}
+
+esp_err_t A76XX::send_data_and_receive()
+{
+    int ret = check_network_and_simcard();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = pdp_context_init();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = set_retrieve_data_mode();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = connect_to_server();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = tcp_send();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = tcp_receive();
+    if (ret != ESP_OK)
+        return ret;
+
+    return disconnect_from_server();
+}
+
+esp_err_t A76XX::receive_data()
+{
+    int ret = check_network_and_simcard();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = pdp_context_init();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = set_retrieve_data_mode();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = connect_to_server();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = tcp_receive();
+    if (ret != ESP_OK)
+        return ret;
+
+    return disconnect_from_server();
+}
+
+esp_err_t A76XX::check_network_and_simcard()
+{
+    // query sim card status
+    int ret = check_simcard();
+    if (ret != ESP_OK)
+        return ret;
+    
+    ret = get_signal_quality();
+    if (ret != ESP_OK)
+        return ret;
+
+    // query gsm network
+    ret = check_gsm_network();
+    if (ret != ESP_OK)
+        return ret;
+
+    // query gprs/lte network in 90s
+    ret = check_gprs_lte_network();
+    if (ret != ESP_OK)
+        return ret;
+
+    return get_operator_name();
+}
+
+esp_err_t A76XX::pdp_context_init()
+{
+    // activate pdp context
+    // AT+CGDCONT and AT+CGACT
+    // query ip address of pdp context AT+CGPADDR
+    int ret = set_pdp_context();
+    if (ret != ESP_OK)
+        return ret;
+
+    ret = check_pdp_context();
+    if (ret != ESP_OK)
+        return ret;
+
+    return set_pdp_context_active();
+}
+
+esp_err_t A76XX::connect_to_server()
+{
+    // set tcp/ip mode
+    int ret = set_tcpip_mode();
+    if (ret != ESP_OK)
+        return ret;
+
+    // activate pdp context
+    ret = start_socket_service();
+    if (ret != ESP_OK)
+        return ret;
+
+    // get ip addr
+    ret = get_socket_ip();
+    if (ret != ESP_OK)
+        return ret;
+
+    // establish connection
+    std::string cmd = "+CIPOPEN: 0,0";
+    return tcp_connect(cmd);
+}
+
+esp_err_t A76XX::connect_to_server_rx_mode()
+{
+    // set tcp/ip mode
+    int ret = set_tcpip_mode();
+    if (ret != ESP_OK)
+        return ret;
+
+    // activate pdp context
+    ret = start_socket_service();
+    if (ret != ESP_OK)
+        return ret;
+
+    // get ip addr
+    ret = get_socket_ip();
+    if (ret != ESP_OK)
+        return ret;
+
+    // establish connection
+    std::string cmd = "+CIPRXGET: 1,0";
+    return tcp_connect(cmd);
+}
+
+esp_err_t A76XX::disconnect_from_server()
+{
+    // close socket
+    int ret = close_socket();
+    if (ret != ESP_OK)
+        return ret;
+
+    // deactivate pdp context
+    return stop_socket_service();
 }

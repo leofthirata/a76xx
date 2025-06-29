@@ -7,6 +7,7 @@
 #include <vector>
 #include <functional>
 #include <string>
+#include <tuple>
 
 #include "esp_system.h"
 #include "esp_log.h"
@@ -21,15 +22,15 @@
 
 #include "esp_log.h"
 #include <esp_check.h>
-#include "esp_netif.h"
-#include "esp_netif_ppp.h"
+// #include "esp_netif.h"
+// #include "esp_netif_ppp.h"
 #include "driver/gpio.h"
-#include "cxx_include/esp_modem_api.hpp"
-#include "cxx_include/esp_modem_dce_factory.hpp"
-#include "cxx_include/esp_modem_dce.hpp"
-#include "cxx_include/esp_modem_dte.hpp"
-#include "cxx_include/esp_modem_dce_module.hpp"
-#include "esp_modem_config.h"
+// #include "cxx_include/esp_modem_api.hpp"
+// #include "cxx_include/esp_modem_dce_factory.hpp"
+// #include "cxx_include/esp_modem_dce.hpp"
+// #include "cxx_include/esp_modem_dte.hpp"
+// #include "cxx_include/esp_modem_dce_module.hpp"
+// #include "esp_modem_config.h"
 #include "string.h"
 #include "sys/time.h"
 #include "esp_timer.h"
@@ -42,7 +43,16 @@ typedef enum
     MODEM_STATE_REGISTERED,
     MODEM_STATE_DETACH,
     MODEM_STATE_ATTACH,
+    MODEM_STATE_NETWORK_CONTEXT_DEACT,
+    MODEM_STATE_NETWORK_CLOSED,
 } ModemStatus_t;
+
+struct LBS {
+    std::string lat;
+    std::string lon;
+    std::string date;
+    std::string time;
+};
 
 using status_handle_t = void (*)(const ModemStatus_t &);
 using log_handle_t = void (*)(const std::string &);
@@ -58,12 +68,24 @@ public:
     
     esp_err_t send_cmd(const std::string &cmd, std::string *out, const std::string &pass, const std::string &fail, const int &timeout);
 
-    esp_err_t get_lbs(std::string *lat, std::string *lon);
-    esp_err_t get_date_time(std::string *date, std::string *time);
-
     bool can_send();
     void power_on();
     esp_err_t power_off();
+
+    bool get_simcard();
+    bool get_registered();
+    bool get_on();
+
+    void get_last_err(std::tuple<std::string, std::string> *out) const;
+
+    esp_err_t send_data();
+    esp_err_t send_data_and_receive();
+    esp_err_t receive_data();
+    esp_err_t update_position();
+
+    LBS lbs {};
+
+private:
     esp_err_t check_simcard();
     esp_err_t get_imei();
     esp_err_t get_signal_quality();
@@ -72,25 +94,31 @@ public:
     esp_err_t set_echo_mode();
     esp_err_t check_gsm_network();
     esp_err_t check_gprs_lte_network();
+    esp_err_t check_ue_info();
+
+    esp_err_t check_network_and_simcard();
+    esp_err_t pdp_context_init();
+    esp_err_t connect_to_server();
+    esp_err_t connect_to_server_rx_mode();
+    esp_err_t disconnect_from_server();
+
     esp_err_t set_error_report_numeric();
-    esp_err_t deactivate_pdp_context();
+    esp_err_t stop_socket_service();
     esp_err_t set_pdp_context();
-    esp_err_t get_pdp_context();
+    esp_err_t check_pdp_context();
     esp_err_t set_pdp_context_active();
     esp_err_t set_retrieve_data_mode();
     esp_err_t set_tcpip_mode();
-    esp_err_t activate_pdp_context();
+    esp_err_t start_socket_service();
     esp_err_t get_socket_ip();
     esp_err_t close_socket();
-    esp_err_t tcp_connect();
+    esp_err_t tcp_connect(const std::string &pass);
     esp_err_t tcp_send();
     esp_err_t tcp_receive();
 
-    bool get_simcard();
-    bool get_registered();
-    bool get_on();
+    esp_err_t get_lbs();
+    esp_err_t get_date_time();
 
-private:
     gpio_num_t tx_pin;
     gpio_num_t rx_pin;
     gpio_num_t en_pin;
@@ -119,13 +147,17 @@ private:
     esp_timer_handle_t m_power_up_timer;
     esp_timer_handle_t m_send_cmd_timer;
 
+    // map with error related to at cmd
+    std::tuple<std::string, std::string> last_cmd_fail {"", ""};
+    // timer to get lbs
+
     bool m_power_up;
     bool m_send_cmd_up;
     bool m_just_turned_on;
     bool m_cmd_sent;
     bool m_on;
-    bool m_registered;
     bool m_simcard;
+    bool m_registered {false};
 
     status_handle_t m_s;
     log_handle_t m_l;
@@ -137,6 +169,13 @@ private:
     QueueHandle_t xQueueModemRx;
 
     BaseType_t xHigherPriorityTaskWoken;
+
+    int rssi {0};
+    int rssi_dbm {0};
+    int ber {0};
+    std::string ip {""};
+    std::string nw_operator {""};
+    std::string nw_tech {""};
 
     friend void netlight_task(void *args);
     friend void power_task(void *args);
