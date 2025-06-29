@@ -1,6 +1,10 @@
 #include "a76xx.hpp"
 #include "error_codes.hpp"
 
+#include "driver/uart.h"
+#include "esp_check.h"
+#include "esp_log.h"
+
 #define HIGH 1
 #define LOW 0
 
@@ -19,6 +23,14 @@ void netlight_task(void *args);
 void power_task(void *args);
 void rx_task(void *args);
 
+static void timer_set_timer(esp_timer_handle_t timer, uint64_t timeout)
+{
+    if (esp_timer_is_active(timer))
+        esp_timer_stop(timer);
+
+    esp_timer_start_once(timer, timeout);
+}
+
 void IRAM_ATTR a76xx_netlight_isr(void *args)
 {
     A76XX *modem = static_cast<A76XX *>(args);
@@ -26,7 +38,7 @@ void IRAM_ATTR a76xx_netlight_isr(void *args)
     static unsigned long pulseStartPositiveTime, pulseStartNegativeTime; // Start time variable
     unsigned long now = esp_timer_get_time();
 
-    if (gpio_get_level((gpio_num_t)modem->m_netlight_pin) == HIGH) { // If the change was a RISING edge
+    if (gpio_get_level(modem->m_netlight_pin) == HIGH) { // If the change was a RISING edge
         pulseStartPositiveTime = now; // Store the start time (in microseconds)
         modem->isrNegativeWidth = now - pulseStartNegativeTime;
     }
@@ -64,11 +76,11 @@ void A76XX::log_callback(log_handle_t l)
 
 A76XX::A76XX(int rxd_pin, int txd_pin, int pwrkey_pin, int power_on_pin, int netlight_pin, int uart, int baudrate)
 {
-    m_rxd_pin = rxd_pin;
-    m_txd_pin = txd_pin;
-    m_pwrkey_pin = pwrkey_pin;
-    m_power_on_pin = power_on_pin;
-    m_netlight_pin = netlight_pin;
+    m_rxd_pin = static_cast<gpio_num_t>(rxd_pin);
+    m_txd_pin = static_cast<gpio_num_t>(txd_pin);
+    m_pwrkey_pin = static_cast<gpio_num_t>(pwrkey_pin);
+    m_power_on_pin = static_cast<gpio_num_t>(power_on_pin);
+    m_netlight_pin = static_cast<gpio_num_t>(netlight_pin);
     m_uart = uart;
     m_baurate = baudrate;
     m_power_up = false;
@@ -119,6 +131,7 @@ A76XX::A76XX(int rxd_pin, int txd_pin, int pwrkey_pin, int power_on_pin, int net
     xTaskCreate(rx_task, "rx_task", 1024*3, this, 2, &m_rx_task_handle);
 }
 
+// TODO deinit
 A76XX::~A76XX()
 {
 }
@@ -141,7 +154,7 @@ void netlight_task(void *args)
             modem->negativePulseWidth = 0;
         }
 
-        modem->timer_set_timer(modem->m_timer, 5000000);
+        timer_set_timer(modem->m_timer, 5000000);
         // 200ms +- 10%
         if (modem->negativePulseWidth / 1000 < 240 && modem->negativePulseWidth / 1000 > 160)
             modem->set_state(MODEM_STATE_REGISTERED);
@@ -155,7 +168,7 @@ void power_task(void *args)
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (gpio_get_level((gpio_num_t)modem->m_netlight_pin) == 0) {
+        if (gpio_get_level(modem->m_netlight_pin) == 0) {
             modem->set_state(MODEM_STATE_OFF);
         }
         else {
@@ -213,17 +226,17 @@ void rx_task(void *args) // UART Receive Task
     }
 }
 
-bool A76XX::get_simcard()
+bool A76XX::get_simcard() const
 {
     return m_simcard;
 }
 
-bool A76XX::get_registered()
+bool A76XX::get_registered() const
 {
     return m_registered;
 }
 
-bool A76XX::get_on()
+bool A76XX::get_on() const
 {
     return m_on;
 }
@@ -327,15 +340,7 @@ void A76XX::set_state(ModemStatus_t state)
     }
 }
 
-void A76XX::timer_set_timer(esp_timer_handle_t timer, uint64_t timeout)
-{
-    if (esp_timer_is_active(timer))
-        esp_timer_stop(timer);
-
-    esp_timer_start_once(timer, timeout);
-}
-
-void A76XX::uart_config()
+void A76XX::uart_config() const
 {
     uart_config_t config = {};
     config.baud_rate = m_baurate;
@@ -353,7 +358,7 @@ void A76XX::uart_config()
     ESP_ERROR_CHECK(uart_set_rx_timeout(m_uart, 3));
 }
 
-void A76XX::pwrkey_config()
+void A76XX::pwrkey_config() const
 {
     gpio_config_t io_conf = {}; // zero-initialize the config structure.
 
@@ -365,8 +370,8 @@ void A76XX::pwrkey_config()
 
     gpio_config(&io_conf); // configure GPIO with the given settings
 
-    gpio_set_level((gpio_num_t)m_power_on_pin, false);
-    gpio_set_level((gpio_num_t)m_pwrkey_pin, false);
+    gpio_set_level(m_power_on_pin, false);
+    gpio_set_level(m_pwrkey_pin, false);
 }
 
 void A76XX::netlight_config()
@@ -380,20 +385,20 @@ void A76XX::netlight_config()
     gpio_config(&io_conf);
 
     gpio_install_isr_service(0);
-    gpio_isr_handler_add((gpio_num_t)m_netlight_pin, a76xx_netlight_isr, this);
+    gpio_isr_handler_add(m_netlight_pin, a76xx_netlight_isr, this);
 }
 
 void A76XX::power_on()
 {
-    gpio_set_level((gpio_num_t)m_power_on_pin, true);
+    gpio_set_level(m_power_on_pin, true);
     vTaskDelay(pdMS_TO_TICKS(500));
-    gpio_set_level((gpio_num_t)m_pwrkey_pin, 1);
+    gpio_set_level(m_pwrkey_pin, 1);
     vTaskDelay(pdMS_TO_TICKS(500));
-    gpio_set_level((gpio_num_t)m_pwrkey_pin, 0);
+    gpio_set_level(m_pwrkey_pin, 0);
     vTaskDelay(pdMS_TO_TICKS(500));
-    gpio_set_level((gpio_num_t)m_pwrkey_pin, 1);
+    gpio_set_level(m_pwrkey_pin, 1);
     vTaskDelay(pdMS_TO_TICKS(500));
-    gpio_set_level((gpio_num_t)m_pwrkey_pin, 0);
+    gpio_set_level(m_pwrkey_pin, 0);
 
     m_just_turned_on = true;
 }
@@ -406,7 +411,7 @@ esp_err_t A76XX::power_off()
     std::string out;
 
     int ret = send_cmd(cmd.c_str(), &out, "OK", "ERROR", 9000);
-    gpio_set_level((gpio_num_t)m_power_on_pin, false);
+    gpio_set_level(m_power_on_pin, false);
 
     if (ret != ESP_OK) {
         last_cmd_fail = {cmd, "ERROR"};
@@ -617,6 +622,7 @@ esp_err_t A76XX::stop_socket_service()
 }
 
 // cmd params must be sent between quotes ""
+// TODO pass cmd params as function params
 esp_err_t A76XX::set_pdp_context()
 {
     const std::string cmd = "AT+CGDCONT=1,\"IP\",\"simplepm.algar.br\",\"0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0\",0,0\r";
@@ -753,6 +759,7 @@ esp_err_t A76XX::close_socket()
     return ESP_OK;
 }
 
+// TODO pass cmd params as function params
 // cmd params must be sent between quotes ""
 esp_err_t A76XX::tcp_connect(const std::string &pass)
 {

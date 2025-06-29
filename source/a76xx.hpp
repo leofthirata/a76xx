@@ -1,38 +1,15 @@
 #pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
 #include <vector>
-#include <functional>
 #include <string>
 #include <tuple>
-
-#include "esp_system.h"
-#include "esp_log.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 
-#include "driver/uart.h"
 #include "driver/gpio.h"
-
-#include "esp_log.h"
-#include <esp_check.h>
-// #include "esp_netif.h"
-// #include "esp_netif_ppp.h"
-#include "driver/gpio.h"
-// #include "cxx_include/esp_modem_api.hpp"
-// #include "cxx_include/esp_modem_dce_factory.hpp"
-// #include "cxx_include/esp_modem_dce.hpp"
-// #include "cxx_include/esp_modem_dte.hpp"
-// #include "cxx_include/esp_modem_dce_module.hpp"
-// #include "esp_modem_config.h"
-#include "string.h"
-#include "sys/time.h"
 #include "esp_timer.h"
 
 typedef enum
@@ -66,15 +43,13 @@ public:
     void status_callback(status_handle_t s);
     void log_callback(log_handle_t s);
     
-    esp_err_t send_cmd(const std::string &cmd, std::string *out, const std::string &pass, const std::string &fail, const int &timeout);
-
-    bool can_send();
     void power_on();
     esp_err_t power_off();
 
-    bool get_simcard();
-    bool get_registered();
-    bool get_on();
+    bool can_send();
+    bool get_simcard() const;
+    bool get_registered() const;
+    bool get_on() const;
 
     void get_last_err(std::tuple<std::string, std::string> *out) const;
 
@@ -86,6 +61,7 @@ public:
     LBS lbs {};
 
 private:
+    esp_err_t send_cmd(const std::string &cmd, std::string *out, const std::string &pass, const std::string &fail, const int &timeout);
     esp_err_t check_simcard();
     esp_err_t get_imei();
     esp_err_t get_signal_quality();
@@ -119,15 +95,11 @@ private:
     esp_err_t get_lbs();
     esp_err_t get_date_time();
 
-    gpio_num_t tx_pin;
-    gpio_num_t rx_pin;
-    gpio_num_t en_pin;
-
-    int m_power_on_pin;
-    int m_pwrkey_pin;
-    int m_netlight_pin;
-    int m_rxd_pin;
-    int m_txd_pin;
+    gpio_num_t m_power_on_pin;
+    gpio_num_t m_pwrkey_pin;
+    gpio_num_t m_netlight_pin;
+    gpio_num_t m_rxd_pin;
+    gpio_num_t m_txd_pin;
 
     int m_uart;
     int m_baurate;
@@ -147,9 +119,7 @@ private:
     esp_timer_handle_t m_power_up_timer;
     esp_timer_handle_t m_send_cmd_timer;
 
-    // map with error related to at cmd
     std::tuple<std::string, std::string> last_cmd_fail {"", ""};
-    // timer to get lbs
 
     bool m_power_up;
     bool m_send_cmd_up;
@@ -184,11 +154,9 @@ private:
     friend void IRAM_ATTR a76xx_netlight_isr(void *args);
     friend void timer_callback(void *args);
     friend void power_up_timer_callback(void *args);
-    friend void send_cmd_timer_callback(void *args);
 
     void netlight_config();
-    void pwrkey_config();
-    void uart_config();
+    void pwrkey_config() const;
+    void uart_config() const;
     void set_state(ModemStatus_t state);
-    void timer_set_timer(esp_timer_handle_t timer, uint64_t timeout);
 };

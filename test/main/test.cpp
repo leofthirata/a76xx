@@ -1,21 +1,17 @@
-#include "sdkconfig.h"
+#include "a76xx.hpp"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "sdkconfig.h"
 #include "esp_log.h"
 #include "driver/uart.h"
-
-#include "LedBicolor.hpp"
-#include "a76xx.hpp"
 
 #define A7683_TXD_PIN         14
 #define A7683_RXD_PIN         34
 #define A7683_PWRKEY          25
 #define A7683_POWER_ON        32
 #define A7683_NETLIGHT        15
-#define PIN_LED_STATUS_RED  GPIO_NUM_33
-#define PIN_LED_STATUS_GREEN GPIO_NUM_25
 
 bool can_send = false;
 int state = 7;
@@ -29,104 +25,6 @@ void timer_set_timer(esp_timer_handle_t timer, uint64_t timeout)
 
     esp_timer_start_once(timer, timeout);
 }
-
-// void test_lte(A76XX *m)
-// {
-//     printf("TEST LTE BEGIN\r\n");
-
-//     // auto banding?
-
-//     // query sim card status
-//     int ret = m->check_simcard();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-    
-//     ret = m->get_signal_quality();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // query gsm network
-//     ret = m->check_gsm_network();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // query gprs/lte network in 90s
-//     ret = m->check_gprs_lte_network();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // activate pdp context
-//     // AT+CGDCONT and AT+CGACT
-//     // query ip address of pdp context AT+CGPADDR
-//     ret = m->set_pdp_context();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     ret = m->check_pdp_context();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-//     ret = m->set_pdp_context_active();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     ret = m->set_retrieve_data_mode();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // set tcp/ip mode
-//     ret = m->set_tcpip_mode();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // activate pdp context
-//     ret = m->start_socket_service();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // get ip addr
-//     ret = m->get_socket_ip();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // establish connection
-//     ret = m->tcp_connect();
-//     if (ret != ESP_OK) {
-//         // check if server ok
-//     }
-
-//     ret = m->tcp_receive();
-//     if (ret != ESP_OK) {
-//         // check connection
-//     }
-
-//     ret = m->tcp_send();
-//     if (ret != ESP_OK) {
-//         // check connection
-//     }
-
-//     // close socket
-//     ret = m->close_socket();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-
-//     // deactivate pdp context
-//     ret = m->stop_socket_service();
-//     if (ret != ESP_OK) {
-//         // reboot
-//     }
-// }
 
 void on_log_received(const std::string &log)
 {
@@ -146,6 +44,8 @@ void state_timer_callback(void *args)
     state = 0;
 }
 
+// TODO check heap before and after
+// TODO check heap before and after deleting pointer
 extern "C" void app_main(void)
 {
     // esp_log_level_set("*", ESP_LOG_DEBUG);
